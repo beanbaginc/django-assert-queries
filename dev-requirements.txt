@@ -1,0 +1,7 @@
+django~=4.2.16
+kgb~=7.1
+
+# Install pytest and all the plugin dependencies we use.
+pytest~=8.3.3
+pytest-django~=4.8.0
+pytest-env~=1.1.3

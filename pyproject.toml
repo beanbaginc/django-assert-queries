@@ -1,0 +1,61 @@
+[build-system]
+requires = ['setuptools']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'django-assert-queries'
+description = 'Assert and instrument executed database queries using Django.'
+authors = [
+    {name = 'Beanbag, Inc.', email = 'questions@beanbaginc.com'},
+]
+license = { text = 'MIT' }
+readme = 'README.md'
+requires-python = '>=3.8'
+dynamic =  ['version']
+
+dependencies = [
+    'typing_extensions>=4.4',
+]
+
+keywords = [
+    'database',
+    'django',
+    'pytest',
+    'sql',
+    'unit tests',
+]
+
+classifiers = [
+    'Development Status :: 5 - Production/Stable',
+    'Environment :: Other Environment',
+    'Framework :: Pytest',
+    'Intended Audience :: Developers',
+    'License :: OSI Approved :: MIT License',
+    'Operating System :: OS Independent',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.8',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
+    'Topic :: Software Development',
+    'Topic :: Software Development :: Libraries',
+    'Topic :: Software Development :: Libraries :: Python Modules',
+    'Topic :: Software Development :: Testing',
+]
+
+
+[project.urls]
+Homepage = 'https://github.com/beanbaginc/django-assert-queries'
+Documentation = 'https://github.com/beanbaginc/django-assert-queries'
+Repository = 'https://github.com/beanbaginc/django-assert-queries'
+
+
+[tool.setuptools.package-data]
+django_assert_queries = ['py.typed']
+
+
+[tool.setuptools.dynamic]
+version = { attr = 'django_assert_queries._version.get_package_version' }

@@ -1,0 +1,5 @@
+REVIEWBOARD_URL = 'http://reviews.reviewboard.org/'
+REPOSITORY = 'django-assert-queries'
+REPOSITORY_TYPE = 'git'
+BRANCH = 'master'
+LAND_DEST_BRANCH = 'master'
