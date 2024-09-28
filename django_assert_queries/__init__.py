@@ -61,3 +61,5 @@ __all__ = [
     'get_version_string',
     'is_release',
 ]
+
+__autodoc_excludes__ = __all__

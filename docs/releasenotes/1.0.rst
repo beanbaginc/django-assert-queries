@@ -1,0 +1,27 @@
+=========================
+django-assert-queries 1.0
+=========================
+
+**Release date:** TBD
+
+``django-assert-queries`` helps developers working with Django thoroughly test
+and instrument their queries, keeping them from exploding out of control.
+
+With proper use, this can save companies from costly mistakes. `We've
+<https://www.reviewboard.org>`_ found it to be an invaluable tool in our
+arsenal.
+
+Registries was built to help develop `Review Board`_, our premier code review
+product from Beanbag_, and we're making it available for use in other
+projects.
+
+
+Learn More
+==========
+
+See the :ref:`documentation <django-assert-queries-docs>` for examples,
+installation instructions, and full codebase documentation.
+
+
+.. _Beanbag: https://www.beanbaginc.com
+.. _Review Board: https://www.reviewboard.org
