@@ -2,7 +2,7 @@
 django-assert-queries 1.0
 =========================
 
-**Release date:** TBD
+**Release date:** September 27, 2024
 
 ``django-assert-queries`` helps developers working with Django thoroughly test
 and instrument their queries, keeping them from exploding out of control.

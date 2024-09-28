@@ -10,4 +10,4 @@ Release Notes
 .. toctree::
    :maxdepth: 1
 
-   django-assert-queries 1.0 (TBD) <1.0>
+   django-assert-queries 1.0 (September 27, 2024) <1.0>
