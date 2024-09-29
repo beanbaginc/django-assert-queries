@@ -1,0 +1,11 @@
+===========================
+django-assert-queries 1.0.1
+===========================
+
+**Release date:** September 28, 2024
+
+
+Packaging
+=========
+
+* Added a required dependency on :pypi:`kgb` >= 7.1.1
