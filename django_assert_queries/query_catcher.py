@@ -143,8 +143,6 @@ def catch_queries(
     It will also provide a mapping of the Query objects to their Q
     expressions.
 
-    To use this, :pypi:`kgb` must be installed.
-
     Version Added:
         1.0
 
@@ -160,14 +158,6 @@ def catch_queries(
         CatchQueriesContext:
         The context populated with query information.
     """
-    try:
-        import kgb
-    except ImportError as e:
-        raise ImportError(
-            'kgb could not be imported. It is required in order to use '
-            'django_assert_queries.catch_queries(). Error: %s'
-            % e)
-
     spy_agency = kgb.SpyAgency()
 
     executed_queries: List[ExecutedQueryInfo] = []
