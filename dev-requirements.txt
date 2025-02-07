@@ -1,5 +1,3 @@
-django~=4.2.16
-
 # Install pytest and all the plugin dependencies we use.
 pytest~=8.3.3
 pytest-django~=4.8.0
