@@ -10,10 +10,12 @@ import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Sequence, Type, Union
+from typing import Any, Dict, Iterator, List, Mapping, Sequence, Type, Union
 
+import kgb
 from django.core.exceptions import EmptyResultSet
-from django.db.models import Q, QuerySet, Subquery
+from django.db.models import Model, Q, QuerySet, Subquery
+from django.db.models.deletion import Collector as DeleteCollector
 from django.db.models.expressions import ExpressionWrapper
 from django.db.models.signals import pre_delete
 from django.db.models.sql.compiler import (SQLCompiler,
@@ -52,6 +54,8 @@ class ExecutedQueryInfo(TypedDict):
     This contains information seen at execution time that can be used for
     inspection of the queries.
 
+    This should not be populated by consumers, only by this library.
+
     Version Added:
         1.0
     """
@@ -82,6 +86,8 @@ class ExecutedSubQueryInfo(TypedDict):
 
     This contains information seen at execution time that can be used for
     inspection of the queries.
+
+    This should not be populated by consumers, only by this library.
 
     Version Added:
         1.0
@@ -114,9 +120,17 @@ class CatchQueriesContext:
 
     This is provided and populated when using :py:func:`catch_queries`.
 
+    This should not be populated by consumers, only by this library.
+
     Version Added:
         1.0
     """
+
+    #: A mapping of deleted instance IDs to their original primary keys.
+    #:
+    #: Version Added:
+    #:     2.0
+    deleted_objects: Mapping[int, Any]
 
     #: Information on the queries that were executed.
     executed_queries: Sequence[ExecutedQueryInfo]
@@ -160,6 +174,7 @@ def catch_queries(
     """
     spy_agency = kgb.SpyAgency()
 
+    deleted_objects: dict[int, Any] = {}
     executed_queries: List[ExecutedQueryInfo] = []
     queries_to_qs: Dict[SQLQuery, Q] = {}
 
@@ -253,6 +268,20 @@ def catch_queries(
 
         return result
 
+    # Listen for any deletions and record their primary keys before they're
+    # unset.
+    @spy_agency.spy_for(DeleteCollector.collect, owner=DeleteCollector)
+    def _delete_collector_collect(
+        _self: DeleteCollector,
+        objs: Sequence[Model],
+        *args,
+        **kwargs,
+    ) -> None:
+        DeleteCollector.collect.call_original(_self, objs, *args, **kwargs)
+
+        for obj in objs:
+            deleted_objects[id(obj)] = obj.pk
+
     # Set up an explicit pre_delete signal. During deletion, Django
     # attempts to determine if it can fast-delete (which can be done if,
     # amongst other things, signals don't need to be emitted for each
@@ -270,7 +299,8 @@ def catch_queries(
 
     # Let the caller execute SQL. Results will be stored in the context.
     try:
-        yield CatchQueriesContext(executed_queries=executed_queries,
+        yield CatchQueriesContext(deleted_objects=deleted_objects,
+                                  executed_queries=executed_queries,
                                   queries_to_qs=queries_to_qs)
     finally:
         # We no longer need to track anything in the compiler of Query.

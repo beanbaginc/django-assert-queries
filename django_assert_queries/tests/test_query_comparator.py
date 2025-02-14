@@ -16,6 +16,7 @@ from django_assert_queries.query_catcher import CatchQueriesContext
 from django_assert_queries.query_comparator import (compare_queries,
                                                     _format_node,
                                                     _normalize_q)
+from django_assert_queries.tests.models import Author, Book, TestModel
 from django.test.testcases import TestCase
 
 if TYPE_CHECKING:
@@ -32,6 +33,57 @@ class CompareQueriesTests(TestCase):
     maxDiff = None
 
     _extra_ws_re = re.compile(r'\s{2,}')
+
+    def test_with_delete(self) -> None:
+        """Testing compare_queries with DELETE"""
+        author = Author.objects.create(name='Dr. Authorman')
+        book = Book.objects.create(name='Book: A Reading Experience',
+                                   author=author)
+
+        queries: ExpectedQueries = [
+            {
+                'join_types': {
+                    'tests_book': 'INNER JOIN',
+                },
+                'model': Author,
+                'num_joins': 1,
+                'tables': {
+                    'tests_author',
+                    'tests_book',
+                },
+                'type': 'SELECT',
+                'where': Q(books__in=[book]),
+            },
+            {
+                'model': Book,
+                'where': Q(author__in=[author]),
+            },
+            {
+                'model': Book,
+                'type': 'DELETE',
+                'where': Q(id__in=[book.pk]),
+            },
+            {
+                'model': Author,
+                'type': 'DELETE',
+                'where': Q(id__in=[author.pk]),
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            # We're deleting this way in order to ensure we're properly
+            # handling comparisons with deleted objects. The second query
+            # will result in author.pk being unset, which would affect
+            # our comparison above without the workarounds present in
+            # the query catcher and comparator.
+            Author.objects.filter(books__in=[book]).delete()
+
+        self.assertEqual(ctx['query_mismatches'], [])
+        self.assertFalse(ctx['has_mismatches'])
+        self.assertEqual(ctx['num_executed_queries'], 4)
+        self.assertEqual(ctx['num_expected_queries'], 4)
+        self.assertFalse(ctx['query_count_mismatch'])
+        self.assertEqual(ctx['query_mismatches'], [])
 
     def test_with_select_q_and_match(self) -> None:
         """Testing compare_queries with SELECT and Q() and match"""
@@ -1067,13 +1119,25 @@ class FormatNodeTests(TestCase):
     def setUp(self) -> None:
         super().setUp()
 
-        self.catch_ctx = CatchQueriesContext(executed_queries=[],
+        self.catch_ctx = CatchQueriesContext(deleted_objects={},
+                                             executed_queries=[],
                                              queries_to_qs={})
 
     def tearDown(self) -> None:
         self.catch_ctx = None  # type: ignore
 
         super().tearDown()
+
+    def test_with_models(self) -> None:
+        """Testing _format_node with models"""
+        obj1 = TestModel.objects.create(name='test1')
+        obj2 = TestModel.objects.create(name='test1')
+
+        self.assertEqual(
+            _format_node(_normalize_q(Q(group__in=[obj1, obj2])),
+                         catch_ctx=self.catch_ctx),
+            'Q(group__in=[<TestModel: TestModel object (1)>,'
+            ' <TestModel: TestModel object (2)>])')
 
     def test_with_nested_q(self) -> None:
         """Testing _format_node with single nested Qs"""
@@ -1207,6 +1271,19 @@ class NormalizeQTests(TestCase):
     Version Added:
         1.0
     """
+
+    def test_with_models(self) -> None:
+        """Testing _normalize_q with models"""
+        obj1 = TestModel.objects.create(name='test1')
+        obj2 = TestModel.objects.create(name='test1')
+
+        norm_q = _normalize_q(Q(group__in=[obj1, obj2]))
+
+        self.assertEqual(norm_q, Q(group__in=[obj1, obj2]))
+        self.assertEqual(
+            repr(norm_q),
+            "<Q: (AND: ('group__in', [<TestModel: TestModel object (1)>,"
+            " <TestModel: TestModel object (2)>]))>")
 
     def test_with_nested_q(self) -> None:
         """Testing _normalize_q with single nested Qs"""

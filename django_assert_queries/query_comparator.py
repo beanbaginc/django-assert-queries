@@ -13,10 +13,11 @@ import operator
 import re
 from contextlib import contextmanager
 from pprint import pformat
-from typing import (Any, Callable, Dict, Iterator, List, Optional, Sequence,
-                    Set, TYPE_CHECKING, Tuple, Type, TypeVar, Union, cast)
+from typing import (Any, Callable, Dict, Iterator, List, Mapping, Optional,
+                    Sequence, Set, TYPE_CHECKING, Tuple, Type, TypeVar,
+                    Union, cast)
 
-from django.db.models import F, Q, QuerySet
+from django.db.models import F, Model, Q, QuerySet
 from django.db.models.expressions import (CombinedExpression,
                                           NegatedExpression,
                                           Subquery,
@@ -287,6 +288,8 @@ class CompareQueriesContext(TypedDict):
 
     This is provided and populated when using :py:func:`compare_queries`.
 
+    This should not be populated by consumers, only by this library.
+
     Version Added:
         1.0
     """
@@ -332,6 +335,139 @@ class _CheckQueryResult(TypedDict):
 
     #: An internal list of unchecked mismatched attributes.
     unchecked_mismatched_attrs: Set[str]
+
+
+class _ModelProxy:
+    """A proxy wrapping a model, for comparison purposes.
+
+    This is used to add enhanced equality comparisons between two models,
+    handling the case where a model on one end of the comparison may be
+    deleted.
+
+    Version Added:
+        2.0
+    """
+
+    ######################
+    # Instance variables #
+    ######################
+
+    #: The original primary key before deletion.
+    _deleted_pk: Optional[Any]
+
+    #: The model being wrapped.
+    _wrapped: Model
+
+    def __init__(
+        self,
+        wrapped: Model,
+        *,
+        deleted_pk: Optional[Any],
+    ) -> None:
+        """Initialize the proxy.
+
+        Args:
+            wrapped (django.db.models.Model):
+                The model to wrap.
+
+            deleted_pk (object):
+                The original primary key before deletion.
+        """
+        self._wrapped = wrapped
+        self._deleted_pk = deleted_pk
+
+    def __hash__(self) -> int:
+        """Return a hash for this proxy.
+
+        This defaults to the standard behavior of returning a hash based on
+        the primary key, but falls back to the deleted primary key.
+
+        Returns:
+            int:
+            The hash for the proxy.
+        """
+        return hash(self.pk or self._deleted_pk)
+
+    def __repr__(self) -> str:
+        """Return a representation of the model.
+
+        Returns:
+            str:
+            The string representation.
+        """
+        return self._wrapped.__repr__()
+
+    def __str__(self) -> str:
+        """Return a string version of the model.
+
+        Returns:
+            str:
+            The string version.
+        """
+        return self._wrapped.__str__()
+
+    def __getattribute__(
+        self,
+        name: str,
+    ) -> Any:
+        """Return the value of an attribute.
+
+        This will proxy to the underlying model for anything but internal
+        attributes.
+
+        Args:
+            name (str):
+                The name of the attribute.
+
+        Returns:
+            object:
+            The attribute value.
+        """
+        if name in ('_deleted_pk', '_wrapped'):
+            return super().__getattribute__(name)
+
+        return self._wrapped.__getattribute__(name)
+
+    def __eq__(
+        self,
+        other: Any,
+    ) -> bool:
+        """Return whether this equals another object.
+
+        This will check if the two objects are of the same model type and
+        if one was deleted. If so, the two objects are considered equal so
+        long as one object is deleted and the other has a primary key in
+        the deletion list.
+
+        Otherwise, this falls back to standard model equality behavior.
+
+        Args:
+            other (object):
+                The object to compare against.
+
+        Returns:
+            bool:
+            ``True`` if the models are equal, or ``False`` if they are not.
+        """
+        _self = self._wrapped
+
+        if type(other) is _ModelProxy:
+            model = _self._meta.concrete_model
+            other_obj = other._wrapped
+            other_model = other_obj._meta.concrete_model
+
+            if (_self is not other_obj and
+                model == other_model and
+                (_self.pk is None or other_obj.pk is None) and
+                _self.pk != other_obj.pk):
+                # Check if one of these is a deleted instance.
+                return (
+                    (_self.pk is None and other.pk == self._deleted_pk) or
+                    (other.pk is None and _self.pk == other._deleted_pk)
+                )
+
+        # Fall back to standard behavior.
+        return _self == other
 
 
 @contextmanager
@@ -623,6 +759,7 @@ def _check_query(
 
         See :py:class:`_CheckQueryResult` for details.
     """
+    deleted_objects = catch_ctx.deleted_objects
     mismatched_attrs: List[QueryMismatchedAttr] = []
     unchecked_mismatched_attrs: Set[str] = set()
 
@@ -802,9 +939,11 @@ def _check_query(
         mismatched_attrs=mismatched_attrs,
         expected_value=_normalize_q(
             expected_query_info.get('where', Q()),
+            deleted_objects=deleted_objects,
             normalize_subqueries=False),
         executed_value=_normalize_q(
             catch_ctx.queries_to_qs.get(executed_query, Q()),
+            deleted_objects=deleted_objects,
             normalize_subqueries=check_subqueries),
         format_expected_value_func=(
             lambda q: _format_node(q, catch_ctx=catch_ctx)),
@@ -870,6 +1009,7 @@ def _build_subquery_placeholder(
 def _normalize_q(
     q: Q,
     *,
+    deleted_objects: Mapping[int, Any] = {},
     subqueries: Optional[List[Any]] = None,
     normalize_subqueries: bool = True,
 ) -> Q:
@@ -883,12 +1023,22 @@ def _normalize_q(
     By default, subqueries will be normalized to
     ``Q(__SubqueryName__subquery__=index)`` objects for comparison purposes.
 
+    Version Changed:
+        2.0:
+        Added ``deleted_objects``.
+
     Version Added:
         1.0
 
     Args:
         q (django.db.models.Q):
             The Q object to normalize.
+
+        deleted_objects (dict, optional):
+            A mapping of any deleted objects to their original primary keys.
+
+            Version Added:
+                2.0
 
         subqueries (list, optional):
             A list of subqueries found, for tracking purposes.
@@ -927,6 +1077,7 @@ def _normalize_q(
 
             # Normalize the child, recursively.
             child = _normalize_q(child,
+                                 deleted_objects=deleted_objects,
                                  subqueries=subqueries,
                                  normalize_subqueries=normalize_subqueries)
             grandchildren = child.children
@@ -957,6 +1108,21 @@ def _normalize_q(
             child = _build_subquery_placeholder(
                 subquery=child,
                 subqueries=subqueries)
+        elif isinstance(child, tuple):
+            if len(child) == 2 and isinstance(child[1], list):
+                norm_children: list[Any] = []
+
+                for item in child[1]:
+                    if isinstance(item, Model):
+                        # Wrap the model in a proxy to allow comparisons
+                        # against deleted instances.
+                        item = _ModelProxy(
+                            item,
+                            deleted_pk=deleted_objects.get(id(item)))
+
+                    norm_children.append(item)
+
+                child = (child[0], norm_children)
 
         children.append(child)
 

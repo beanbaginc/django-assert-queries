@@ -74,6 +74,8 @@ class CaptureQueriesTests(TestCase):
         self.assertEqual(objs[0].name, 'test1')
         self.assertEqual(objs[1].name, 'test2')
 
+        self.assertEqual(ctx.deleted_objects, {})
+
     def test_with_insert(self) -> None:
         """Testing capture_queries with SELECT"""
         with catch_queries() as ctx:
@@ -95,16 +97,25 @@ class CaptureQueriesTests(TestCase):
                 ' VALUES (test1, True, None), (test2, True, None)',
             ])
 
+        self.assertEqual(ctx.deleted_objects, {})
+
     def test_with_delete(self) -> None:
         """Testing capture_queries with DELETE"""
-        obj = TestModel.objects.create(name='test')
-        obj_id = obj.pk
+        obj1 = TestModel.objects.create(name='test1')
+        obj1_id = obj1.pk
+
+        obj2 = TestModel.objects.create(name='test2')
+        obj2_id = obj2.pk
+
+        obj3 = TestModel.objects.create(name='test3')
+        obj3_id = obj3.pk
 
         with catch_queries() as ctx:
-            obj.delete()
+            obj1.delete()
+            TestModel.objects.all().delete()
 
         executed_queries = ctx.executed_queries
-        self.assertEqual(len(executed_queries), 1)
+        self.assertEqual(len(executed_queries), 3)
 
         self._check_query(
             executed_queries[0],
@@ -114,7 +125,35 @@ class CaptureQueriesTests(TestCase):
                 'DELETE FROM "tests_testmodel"'
                 ' WHERE "tests_testmodel"."id" IN (1)',
             ],
-            q=Q(id__in=[obj_id]))
+            q=Q(id__in=[obj1_id]))
+
+        self._check_query(
+            executed_queries[1],
+            ctx=ctx,
+            query_type=ExecutedQueryType.SELECT,
+            sql=[
+                'SELECT "tests_testmodel"."id",'
+                ' "tests_testmodel"."name",'
+                ' "tests_testmodel"."flag",'
+                ' "tests_testmodel"."user_id"'
+                ' FROM "tests_testmodel"'
+            ])
+
+        self._check_query(
+            executed_queries[2],
+            ctx=ctx,
+            query_type=ExecutedQueryType.DELETE,
+            sql=[
+                'DELETE FROM "tests_testmodel"'
+                ' WHERE "tests_testmodel"."id" IN (3, 2)',
+            ],
+            q=Q(id__in=[obj3_id, obj2_id]))
+
+        self.assertEqual(set(ctx.deleted_objects.values()), {
+            obj1_id,
+            obj2_id,
+            obj3_id,
+        })
 
     def test_with_update(self) -> None:
         """Testing capture_queries with UPDATE"""
@@ -137,6 +176,8 @@ class CaptureQueriesTests(TestCase):
                 ' WHERE "tests_testmodel"."id" = 1',
             ],
             q=Q(pk=obj.pk))
+
+        self.assertEqual(ctx.deleted_objects, {})
 
     def test_with_multiple(self) -> None:
         """Testing capture_queries with multiple queries"""
