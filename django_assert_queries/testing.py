@@ -9,7 +9,7 @@ from typing import (Any, Dict, Iterator, List, Optional, Sequence,
 from django_assert_queries.query_comparator import compare_queries
 
 if TYPE_CHECKING:
-    from djagno_assert_queries.query_comparator import (CompareQueriesContext,
+    from django_assert_queries.query_comparator import (CompareQueriesContext,
                                                         ExpectedQuery,
                                                         QueryMismatchedAttr)
 
@@ -22,8 +22,8 @@ def assert_queries(
     *,
     with_tracebacks: bool = False,
     traceback_size: int = 15,
-    check_join_types: Optional[bool] = None,
-    check_subqueries: Optional[bool] = None,
+    check_join_types: bool = True,
+    check_subqueries: bool = True,
 ) -> Iterator[None]:
     """Assert the number and complexity of queries.
 
@@ -32,6 +32,10 @@ def assert_queries(
 
     This takes a list of dictionaries with query information. Each
     contains the keys in :py:class:`ExpectedQuery`.
+
+    Version Added:
+        2.0:
+        Turned on ``check_join_types`` and ``check_subqueries`` by default.
 
     Args:
         queries (list of django_equery.query_comparator.ExpectedQuery):
@@ -50,10 +54,22 @@ def assert_queries(
             If enabled, tracebacks for queries will be included in
             results.
 
-        tracebacks_size (int, optional):
+        traceback_size (int, optional):
             The size of any tracebacks, in number of lines.
 
             The default is 15.
+
+        check_join_types (bool, optional):
+            Whether to check join types.
+
+            If disabled, table join types (``join_types`` on queries) will
+            not be checked.
+
+        check_subqueries (bool, optional):
+            Whether to check subqueries.
+
+            If disabled, ``inner_query`` on queries with subqueries will not
+            be checked.
 
     Raises:
         AssertionError:
