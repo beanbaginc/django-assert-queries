@@ -1,0 +1,24 @@
+=========================
+django-assert-queries 2.0
+=========================
+
+**Release date:** TBD
+
+
+Features
+========
+
+* Join types and subqueries are now checked by default.
+
+  This may require changes to unit tests.
+
+* Objects deleted in a query can now be compared against expected queries.
+
+  When Django deletes related objects, it will perform a query internally
+  to fetch internal copies of the objects, delete them, and then erase their
+  primary keys. This leads to several queries that are captured that reference
+  an object that no longer has a primary key, and these couldn't be compared
+  before.
+
+  Deletions are now carefully tracked, enabling the deleted objects and the
+  expected objects to be compared correctly.

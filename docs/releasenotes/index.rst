@@ -4,6 +4,15 @@
 Release Notes
 =============
 
+2.x Releases
+============
+
+.. toctree::
+   :maxdepth: 1
+
+   django-assert-queries 2.0 (TBD) <2.0>
+
+
 1.x Releases
 ============
 
