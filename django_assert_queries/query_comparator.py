@@ -452,8 +452,12 @@ class _ModelProxy:
         _self = self._wrapped
 
         if type(other) is _ModelProxy:
-            model = _self._meta.concrete_model
             other_obj = other._wrapped
+
+            if _self is other_obj:
+                return True
+
+            model = _self._meta.concrete_model
             other_model = other_obj._meta.concrete_model
 
             if (_self is not other_obj and
