@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import (Any, Dict, Iterator, List, Optional, Sequence,
+from typing import (Any, ContextManager, Dict, List, Optional, Sequence,
                     TYPE_CHECKING, Union)
 
 from django_assert_queries.query_comparator import compare_queries
 
 if TYPE_CHECKING:
+    from types import TracebackType
+
     from django_assert_queries.query_comparator import (CompareQueriesContext,
                                                         ExpectedQuery,
                                                         QueryMismatchedAttr)
 
 
-@contextmanager
 def assert_queries(
     queries: Sequence[Union[ExpectedQuery,
                             Dict[str, Any]]],
@@ -24,7 +24,7 @@ def assert_queries(
     traceback_size: int = 15,
     check_join_types: bool = True,
     check_subqueries: bool = True,
-) -> Iterator[None]:
+) -> ContextManager:
     """Assert the number and complexity of queries.
 
     This provides advanced checking of queries, allowing the caller to
@@ -194,11 +194,88 @@ def assert_queries(
 
         return error_lines
 
-    # Run the query comparisons.
-    with compare_queries(_check_join_types=bool(check_join_types),
-                         _check_subqueries=bool(check_subqueries),
-                         queries=queries) as results:
-        yield
+    # We use an explicit context manager for managing the query comparator
+    # while also hiding this traceback from pytest, so that any assertion
+    # failures appear with the original caller. This gives us greater control
+    # than if assert_queries() was wrapped in @contextmanager (which would
+    # appear in stack traces).
+    class _AssertQueriesContext(ContextManager[None]):
+        """Context manager for comparing and checking queries.
 
-    if results['has_mismatches']:
-        raise AssertionError('\n'.join(_serialize_results(results)))
+        Results from this class are hidden from pytest unit tests.
+
+        Version Added:
+            2.0.1
+        """
+
+        ######################
+        # Instance variables #
+        ######################
+
+        #: The context manager for compare_queries.
+        _compare_ctx: ContextManager
+
+        #: Keyword arguments to pass to compare_queries.
+        _compare_queries_kwargs: dict[str, Any]
+
+        #: The results of any query comparisons.
+        _results: CompareQueriesContext
+
+        def __enter__(self) -> None:
+            """Enter the context."""
+            # Begin capturing queries for comparison.
+            compare_ctx = compare_queries(
+                _check_join_types=bool(check_join_types),
+                _check_subqueries=bool(check_subqueries),
+                queries=queries)
+            self._compare_ctx = compare_ctx
+
+            self._results = compare_ctx.__enter__()
+
+        def __exit__(
+            self,
+            exc_type: Optional[type[BaseException]],
+            exc_value: Optional[BaseException],
+            tb: Optional[TracebackType],
+        ) -> bool:
+            """Exit the context.
+
+            If no exceptions were raised, this will check for mismatches
+            and fail the assertion if found.
+
+            Args:
+                exc_type (type):
+                    The exception type, if an exception was raised.
+
+                exc_value (BaseException):
+                    The exception instance, if an exception was raised.
+
+                tb (types.TracebackType):
+                    The exception's traceback, if an exception was raised.
+
+            Returns:
+                bool:
+                ``True`` if no exception was raised and results were processed.
+                ``False`` if an exception was raised.
+
+            Raises:
+                AssertionError:
+                    There were mismatches to report.
+            """
+            # Hide from pytest
+            __tracebackhide__ = True
+
+            self._compare_ctx.__exit__(exc_type, exc_value, tb)
+
+            if exc_type is not None:
+                return False
+
+            # Compare the queries.
+            results = self._results
+
+            if results['has_mismatches']:
+                raise AssertionError('\n'.join(_serialize_results(results)))
+
+            return True
+
+    return _AssertQueriesContext()
