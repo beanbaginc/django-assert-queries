@@ -23,3 +23,16 @@ Bug Fixes
 
 * Fixed comparing models in query assertions when comparing two of the same
   instance.
+
+
+Contributors
+============
+
+* Christian Hammond
+* David Trowbridge
+* Michelle Aubin
+
+Built by Beanbag_.
+
+
+.. _Beanbag: https://www.beanbaginc.com/
