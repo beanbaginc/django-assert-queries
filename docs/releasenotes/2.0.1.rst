@@ -1,0 +1,25 @@
+===========================
+django-assert-queries 2.0.1
+===========================
+
+**Release date:** TBD
+
+
+Bug Fixes
+=========
+
+* Assertion results now appear directly below the assertion call in
+  pytest-based unit tests.
+
+  Previously, pytest would show a stack trace that goes all the way from the
+  assertion call through the assertion logic to the results, which was a lot
+  of unwanted additional information. This is now hidden in pytest.
+
+* Fixed displaying mismatched sets of models.
+
+  Previously, when comparing unordered sets of models, our attempt to order
+  them would result in a crash. We now catch this case and display it an
+  alternate way.
+
+* Fixed comparing models in query assertions when comparing two of the same
+  instance.
