@@ -1191,9 +1191,16 @@ def _format_query_value(
         return str(value.value)
     elif isinstance(value, set):
         if value:
+            try:
+                value = sorted(value)
+            except TypeError:
+                # The contents may not support __lt__. Sort by string
+                # representation.
+                value = sorted(value, key=repr)
+
             return '{%s}' % ', '.join(
                 repr(_item)
-                for _item in sorted(value)
+                for _item in value
             )
         else:
             return 'set()'

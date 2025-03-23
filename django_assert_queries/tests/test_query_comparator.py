@@ -1264,6 +1264,24 @@ class FormatNodeTests(TestCase):
             "       & Q(e=5)\n"
             "       & ~Q(f=F('g') + 6))))")
 
+    def test_with_set(self) -> None:
+        """Testing _format_node with sets"""
+        self.assertEqual(
+            _format_node(_normalize_q(Q(group__in={9, 3, 10})),
+                         catch_ctx=self.catch_ctx),
+            'Q(group__in={3, 9, 10})')
+
+    def test_with_set_unsortable(self) -> None:
+        """Testing _format_node with sets with unsortable items"""
+        obj1 = TestModel.objects.create(name='test1')
+        obj2 = TestModel.objects.create(name='test1')
+
+        self.assertEqual(
+            _format_node(_normalize_q(Q(group__in={obj2, obj1})),
+                         catch_ctx=self.catch_ctx),
+            'Q(group__in={<TestModel: TestModel object (1)>,'
+            ' <TestModel: TestModel object (2)>})')
+
 
 class NormalizeQTests(TestCase):
     """Unit tests for django_assert_queries.query_comparator._normalize_q.
