@@ -244,13 +244,15 @@ def catch_queries(
     def _query_add_q(
         _self: SQLQuery,
         q_object: Q,
+        *args,
+        **kwargs
     ) -> Any:
         try:
             queries_to_qs[_self] &= q_object
         except KeyError:
             queries_to_qs[_self] = q_object
 
-        return SQLQuery.add_q.call_original(_self, q_object)
+        return SQLQuery.add_q.call_original(_self, q_object, *args, **kwargs)
 
     # Copy Q() objects any time a Query is cloned.
     @spy_agency.spy_for(SQLQuery.clone, owner=SQLQuery)
