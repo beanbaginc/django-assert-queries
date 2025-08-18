@@ -30,7 +30,6 @@ from typing_extensions import Literal, NotRequired, TypeAlias, TypedDict
 from django_assert_queries.query_catcher import catch_queries
 
 if TYPE_CHECKING:
-    from django.db.models import Model
     from django.db.models.expressions import BaseExpression
 
     from django_assert_queries.query_catcher import (CatchQueriesContext,
@@ -734,7 +733,9 @@ def _check_query(
         executed_query (django.db.models.sql.query.Query):
             The executed query to compare.
 
-        executed_query_info (django_assert_queries.query_catcher.ExecutedQueryInfo):
+        executed_query_info (
+            django_assert_queries.query_catcher.ExecutedQueryInfo
+        ):
             Information on the executed query to use for comparison.
 
         expected_query_info (dict):
