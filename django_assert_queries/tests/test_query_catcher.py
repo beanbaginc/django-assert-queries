@@ -909,3 +909,40 @@ class CaptureQueriesTests(TestCase):
                 extra_ws_re.sub(' ', _line)
                 for _line in sql2
             ))
+
+    def test_with_template_rendering(self) -> None:
+        """Testing capture_queries with template rendering"""
+        from django.template import Context, Template
+
+        TestModel.objects.bulk_create([
+            TestModel(name='test1'),
+            TestModel(name='test2'),
+        ])
+
+        template_content = """
+        {% for obj in objects %}
+            {{ obj.name }}
+        {% endfor %}
+        """
+
+        template = Template(template_content)
+        context = Context({'objects': TestModel.objects.all()})
+
+        with catch_queries() as ctx:
+            template.render(context)
+
+        self.assertEqual(len(ctx.executed_queries), 1)
+        query_info = ctx.executed_queries[0]
+
+        # Check that template_info is captured
+        self.assertIn('template_info', query_info)
+        template_info = query_info['template_info']
+
+        # template_info is now a list of templates in the inheritance chain
+        self.assertIsInstance(template_info, list)
+        self.assertTrue(len(template_info) > 0)
+
+        # Check the first template in the chain
+        first_template = template_info[0]
+        self.assertEqual(first_template['name'], 'unknown')
+        self.assertIn('unknown', first_template['origin'])

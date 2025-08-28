@@ -637,6 +637,7 @@ def _check_queries(
                 'query_sql': cast(Optional[List[str]],
                                   executed_query_info.get('sql')),
                 'subqueries': subqueries_compare_ctx,
+                'template_info': executed_query_info.get('template_info'),
                 'traceback': cast(Optional[List[str]],
                                   executed_query_info.get('traceback')),
             })
