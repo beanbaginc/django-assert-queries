@@ -6,11 +6,15 @@ Version Added:
 
 from __future__ import annotations
 
+import inspect
+import os
 import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Mapping, Sequence, Type, Union
+from typing import (
+    Any, Dict, Iterator, List, Mapping, Optional, Sequence, Type, Union
+)
 
 import kgb
 from django.core.exceptions import EmptyResultSet
@@ -25,7 +29,31 @@ from django.db.models.sql.compiler import (SQLCompiler,
 from django.db.models.sql.query import Query as SQLQuery
 from django.db.models.sql.subqueries import AggregateQuery
 from django.utils.tree import Node
-from typing_extensions import Literal, TypedDict
+from typing_extensions import Literal, NotRequired, TypedDict
+
+
+# Template debugging now uses Django's own infrastructure via stack inspection
+# No global state needed - we inspect the call stack during query execution
+
+
+class TemplateInfo(TypedDict):
+    """Information about the template where a query was executed.
+
+    Version Added:
+        2.1
+    """
+
+    #: The name of the template file.
+    name: str
+
+    #: The origin/path of the template.
+    origin: str
+
+    #: The line number in the template (if available).
+    line_number: NotRequired[int]
+
+    #: The line content where the query occurred (if available).
+    line_content: NotRequired[str]
 
 
 class ExecutedQueryType(str, Enum):
@@ -76,6 +104,9 @@ class ExecutedQueryInfo(TypedDict):
 
     #: The lines of traceback showing where the query was executed.
     traceback: List[str]
+
+    #: Information about the template where the query was executed (if any).
+    template_info: NotRequired[TemplateInfo]
 
     #: The type of executed query.
     type: ExecutedQueryType
@@ -139,6 +170,66 @@ class CatchQueriesContext:
     queries_to_qs: Dict[SQLQuery, Q]
 
 
+def _get_template_info_manual_fallback(template, node) -> TemplateInfo:
+    """Manual fallback when Django's get_exception_info can't work."""
+    template_info = {
+        'name': template.name or 'unknown',
+        'origin': template.origin.name if template.origin else 'unknown'
+    }
+
+    # Try to find line number by parsing template source manually
+    if (hasattr(template, 'source') and hasattr(node.token, 'contents') and
+            template.source and node.token.contents):
+        token_content = node.token.contents.strip()
+        for i, line in enumerate(template.source.split('\n'), 1):
+            if token_content in line:
+                template_info.update({
+                    'line_number': i,
+                    'line_content': line.strip()
+                })
+                break
+
+    return template_info
+
+
+def _get_line_info_from_node_origin(node) -> dict:
+    """Extract line information from the node's origin template."""
+    if not (hasattr(node, 'origin') and node.origin and
+            hasattr(node.token, 'position') and node.token.position):
+        return {}
+
+    origin_path = (node.origin.name if hasattr(node.origin, 'name')
+                   else str(node.origin))
+    if not os.path.isfile(origin_path):
+        return {}
+
+    with open(origin_path, 'r', encoding='utf-8') as f:
+        source_lines = f.readlines()
+
+    # Extract line number from token position
+    line_number = (node.token.position[0]
+                   if isinstance(node.token.position, tuple)
+                   else int(node.token.position))
+
+    if 1 <= line_number <= len(source_lines):
+        return {
+            'line_number': line_number,
+            'line_content': source_lines[line_number - 1].strip()
+        }
+
+    # Fallback: search for token content in source
+    if hasattr(node.token, 'contents') and node.token.contents:
+        token_content = node.token.contents.strip()
+        for i, line in enumerate(source_lines, 1):
+            if token_content in line:
+                return {
+                    'line_number': i,
+                    'line_content': line.strip()
+                }
+
+    return {}
+
+
 @contextmanager
 def catch_queries(
     *,
@@ -178,6 +269,110 @@ def catch_queries(
     executed_queries: List[ExecutedQueryInfo] = []
     queries_to_qs: Dict[SQLQuery, Q] = {}
 
+    def _get_template_info_for_query(_self) -> Optional[List[TemplateInfo]]:
+        """Extract template debugging info showing the entire inheritance
+        chain."""
+        template_chain = []
+        seen_templates = set()
+
+        for frame_info in inspect.stack():
+            frame = frame_info.frame
+
+            # Quick validation of frame locals
+            if not all(key in frame.f_locals
+                       for key in ('context', 'self')):
+                continue
+
+            context = frame.f_locals['context']
+            node = frame.f_locals['self']
+
+            # Validate template context
+            if not (hasattr(context, 'render_context') and
+                    hasattr(node, 'token') and hasattr(node, 'render') and
+                    node.token is not None):
+                continue
+
+            template = context.render_context.template
+            if not hasattr(template, 'get_exception_info'):
+                continue
+
+            # Extract template info for this frame
+            if not (hasattr(node.token, 'position') and node.token.position):
+                template_info = _get_template_info_manual_fallback(
+                    template, node)
+            elif hasattr(node, 'origin') and node.origin:
+                # Use node's origin (inheritance scenario)
+                node_origin_name = (node.origin.name
+                                    if hasattr(node.origin, 'name')
+                                    else str(node.origin))
+                template_info = {
+                    'name': os.path.basename(node_origin_name),
+                    'origin': node_origin_name
+                }
+                template_info.update(_get_line_info_from_node_origin(node))
+            else:
+                # Use Django's debugging
+                debug_info = template.get_exception_info(
+                    Exception("Template debugging probe"), node.token)
+                template_info = {
+                    'name': template.name or 'unknown',
+                    'origin': (template.origin.name if template.origin
+                               else 'unknown')
+                }
+
+                if debug_info.get('line', 0) > 0:
+                    template_info['line_number'] = debug_info['line']
+                if debug_info.get('during', '').strip():
+                    template_info['line_content'] = (
+                        debug_info['during'].strip())
+
+            # Add to chain if we have valid info and haven't seen this
+            # template+line combo
+            if template_info:
+                template_key = (template_info['origin'],
+                                template_info.get('line_number', 0))
+                if template_key not in seen_templates:
+                    seen_templates.add(template_key)
+                    template_chain.append(template_info)
+
+        return list(reversed(template_chain)) if template_chain else None
+
+    def _add_query_info(query, query_type, subqueries=None):
+        """Helper to add query info with template debugging."""
+        sql = _serialize_caught_sql(query)
+        if not sql:
+            return
+
+        query_info = {
+            'query': query,
+            'result_type': 'query',
+            'sql': sql,
+            'subqueries': subqueries or [],
+            'traceback': traceback.format_stack(),
+            'type': query_type,
+        }
+
+        # Add template debugging information if available
+        template_chain = _get_template_info_for_query(None)
+        if template_chain:
+            query_info['template_info'] = template_chain
+
+        executed_queries.append(query_info)
+
+    def _call_original_execute_sql(compiler_class, _self, *args, **kwargs):
+        """Helper to call original execute_sql method, handling library
+        conflicts."""
+        execute_sql_method = getattr(compiler_class, 'execute_sql')
+
+        if hasattr(execute_sql_method, 'call_original'):
+            return execute_sql_method.call_original(_self, *args, **kwargs)
+        else:
+            # Fallback for libraries like cachalot that also patch execute_sql
+            method = execute_sql_method
+            while hasattr(method, '__wrapped__'):
+                method = method.__wrapped__
+            return method(_self, *args, **kwargs)
+
     # Track Query objects any time a compiler is executing SQL.
     @spy_agency.spy_for(SQLCompiler.execute_sql,
                         owner=SQLCompiler)
@@ -194,27 +389,17 @@ def catch_queries(
             query_type = ExecutedQueryType.SELECT
 
         query = _self.query
-        sql = _serialize_caught_sql(query)
+        subqueries: List[ExecutedSubQueryInfo] = []
 
-        if sql:
-            subqueries: List[ExecutedSubQueryInfo] = []
+        if _check_subqueries:
+            _scan_subqueries(node=query,
+                             result=subqueries,
+                             queries_to_qs=queries_to_qs,
+                             _check_subqueries=_check_subqueries)
 
-            if _check_subqueries:
-                _scan_subqueries(node=query,
-                                 result=subqueries,
-                                 queries_to_qs=queries_to_qs,
-                                 _check_subqueries=_check_subqueries)
-
-            executed_queries.append({
-                'query': query,
-                'result_type': 'query',
-                'sql': sql,
-                'subqueries': subqueries,
-                'traceback': traceback.format_stack(),
-                'type': query_type,
-            })
-
-        return SQLCompiler.execute_sql.call_original(_self, *args, **kwargs)
+        _add_query_info(query, query_type, subqueries)
+        return _call_original_execute_sql(
+            SQLCompiler, _self, *args, **kwargs)
 
     @spy_agency.spy_for(SQLInsertCompiler.execute_sql,
                         owner=SQLInsertCompiler)
@@ -223,34 +408,24 @@ def catch_queries(
         *args,
         **kwargs,
     ) -> Any:
-        query = _self.query
-        sql = _serialize_caught_sql(query)
-
-        if sql:
-            executed_queries.append({
-                'query': query,
-                'result_type': 'query',
-                'sql': sql,
-                'subqueries': [],
-                'traceback': traceback.format_stack(),
-                'type': ExecutedQueryType.INSERT,
-            })
-
-        return SQLInsertCompiler.execute_sql.call_original(_self, *args,
-                                                           **kwargs)
+        _add_query_info(_self.query, ExecutedQueryType.INSERT)
+        return _call_original_execute_sql(
+            SQLInsertCompiler, _self, *args, **kwargs)
 
     # Build and track Q() objects any time they're added to a Query.
     @spy_agency.spy_for(SQLQuery.add_q, owner=SQLQuery)
     def _query_add_q(
         _self: SQLQuery,
         q_object: Q,
+        *args,
+        **kwargs
     ) -> Any:
         try:
             queries_to_qs[_self] &= q_object
         except KeyError:
             queries_to_qs[_self] = q_object
 
-        return SQLQuery.add_q.call_original(_self, q_object)
+        return SQLQuery.add_q.call_original(_self, q_object, *args, **kwargs)
 
     # Copy Q() objects any time a Query is cloned.
     @spy_agency.spy_for(SQLQuery.clone, owner=SQLQuery)
@@ -267,6 +442,9 @@ def catch_queries(
             pass
 
         return result
+
+    # Template debugging now uses Django's stack inspection approach
+    # No spies needed - we inspect the call stack during query execution
 
     # Listen for any deletions and record their primary keys before they're
     # unset.

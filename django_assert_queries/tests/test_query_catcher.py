@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, List, Optional, TYPE_CHECKING, Type
 
+import django
 from django.db.models import Exists, OuterRef, Q, QuerySet, Subquery, Sum
 from django.db.models.sql.subqueries import AggregateQuery
 from django.test.testcases import TestCase
@@ -28,6 +29,16 @@ class CaptureQueriesTests(TestCase):
     """Unit tests for djblets.db.query_catcher.catch_queries."""
 
     tests_app = 'djblets.db.tests'
+
+    def _get_subquery_pk_sql(self, alias: str) -> str:
+        """Get the correct subquery PK SQL based on Django version.
+
+        Django 5.2+ adds 'AS "pk"' to subqueries, while earlier versions don't.
+        """
+        if django.VERSION >= (5, 2):
+            return f'{alias}."id" AS "pk"'
+        else:
+            return f'{alias}."id"'
 
     maxDiff = None
 
@@ -275,7 +286,7 @@ class CaptureQueriesTests(TestCase):
                 ' "tests_testmodel"."name",'
                 ' "tests_testmodel"."flag", '
                 ' "tests_testmodel"."user_id", '
-                ' (SELECT U0."id"'
+                f' (SELECT {self._get_subquery_pk_sql("U0")}'
                 '   FROM "tests_reltestmodel" U0'
                 '   WHERE'
                 '    U0."test_id" ='
@@ -543,7 +554,7 @@ class CaptureQueriesTests(TestCase):
                 '  ("tests_testmodel"."name"'
                 '    LIKE test% ESCAPE \'\\\' AND'
                 '   "tests_testmodel"."id" IN'
-                '    (SELECT U0."id" FROM'
+                f'    (SELECT {self._get_subquery_pk_sql("U0")} FROM'
                 '      "tests_reltestmodel" U0))',
             ],
 
@@ -679,7 +690,7 @@ class CaptureQueriesTests(TestCase):
                 '  "tests_testmodel"."name" AS "col2",'
                 '  "tests_testmodel"."flag" AS "col3",'
                 '  "tests_testmodel"."user_id" AS "col4",'
-                '  (SELECT V0."id"'
+                f'  (SELECT {self._get_subquery_pk_sql("V0")}'
                 '    FROM "tests_reltestmodel" V0'
                 '    WHERE (V0."test_id" ='
                 '     ("tests_testmodel"."id") AND'
@@ -898,3 +909,40 @@ class CaptureQueriesTests(TestCase):
                 extra_ws_re.sub(' ', _line)
                 for _line in sql2
             ))
+
+    def test_with_template_rendering(self) -> None:
+        """Testing capture_queries with template rendering"""
+        from django.template import Context, Template
+
+        TestModel.objects.bulk_create([
+            TestModel(name='test1'),
+            TestModel(name='test2'),
+        ])
+
+        template_content = """
+        {% for obj in objects %}
+            {{ obj.name }}
+        {% endfor %}
+        """
+
+        template = Template(template_content)
+        context = Context({'objects': TestModel.objects.all()})
+
+        with catch_queries() as ctx:
+            template.render(context)
+
+        self.assertEqual(len(ctx.executed_queries), 1)
+        query_info = ctx.executed_queries[0]
+
+        # Check that template_info is captured
+        self.assertIn('template_info', query_info)
+        template_info = query_info['template_info']
+
+        # template_info is now a list of templates in the inheritance chain
+        self.assertIsInstance(template_info, list)
+        self.assertTrue(len(template_info) > 0)
+
+        # Check the first template in the chain
+        first_template = template_info[0]
+        self.assertEqual(first_template['name'], 'unknown')
+        self.assertIn('unknown', first_template['origin'])

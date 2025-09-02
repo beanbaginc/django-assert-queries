@@ -156,6 +156,7 @@ def assert_queries(
                     note = mismatch_info['note']
                     traceback = mismatch_info.get('traceback')
                     query_sql = mismatch_info.get('query_sql') or []
+                    template_info = mismatch_info.get('template_info')
 
                     if note:
                         title = f'{indent}Query {i + 1} ({note}):'
@@ -191,6 +192,79 @@ def assert_queries(
                             ''.join(traceback[-traceback_size:])
                         error_lines.append(
                             f'{indent}Trace: {traceback_str}')
+
+                    if template_info:
+                        # template_info is now a list of templates in the
+                        # inheritance chain
+                        if isinstance(template_info, list):
+                            error_lines.append(
+                                f'{indent}  Template inheritance chain:')
+                            for i, template_data in enumerate(template_info):
+                                template_name = template_data.get(
+                                    "name", "unknown")
+                                template_origin = template_data.get(
+                                    "origin", "unknown")
+                                line_number = template_data.get("line_number")
+                                line_content = template_data.get(
+                                    "line_content")
+
+                                # Choose template identifier: prefer full path
+                                # for files, name for strings
+                                if template_origin and template_origin not in (
+                                        "unknown", "<unknown source>"):
+                                    template_identifier = template_origin
+                                elif (template_name and
+                                      template_name != "unknown"):
+                                    template_identifier = template_name
+                                else:
+                                    template_identifier = template_origin
+
+                                if line_number:
+                                    error_lines.append(
+                                        f'{indent}    [{i + 1}] In template '
+                                        f'{template_identifier}, error at '
+                                        f'line {line_number}')
+                                    if line_content:
+                                        error_lines.append(
+                                            f'{indent}        {line_number}  '
+                                            f'{line_content}')
+                                else:
+                                    error_lines.append(
+                                        f'{indent}    [{i + 1}] Template: '
+                                        f'{template_name} ({template_origin})')
+                        else:
+                            # Backward compatibility: single template info
+                            # (shouldn't happen with new code)
+                            template_name = template_info.get(
+                                "name", "unknown")
+                            template_origin = template_info.get(
+                                "origin", "unknown")
+                            line_number = template_info.get("line_number")
+                            line_content = template_info.get("line_content")
+
+                            # Choose template identifier: prefer full path
+                            # for files, name for strings
+                            if template_origin and template_origin not in (
+                                    "unknown", "<unknown source>"):
+                                template_identifier = template_origin
+                            elif template_name and template_name != "unknown":
+                                template_identifier = template_name
+                            else:
+                                template_identifier = template_origin
+
+                            if line_number:
+                                error_lines.append(
+                                    f'{indent}  In template '
+                                    f'{template_identifier}, error at line '
+                                    f'{line_number}')
+                                if line_content:
+                                    error_lines.append(
+                                        f'{indent}    {line_number}    '
+                                        f'{line_content}')
+                            else:
+                                error_lines.append(
+                                    f'{indent}  Template: {template_name} '
+                                    f'({template_origin})')
 
         return error_lines
 
