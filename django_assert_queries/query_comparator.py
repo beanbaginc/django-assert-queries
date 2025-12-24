@@ -734,7 +734,8 @@ def _check_query(
         executed_query (django.db.models.sql.query.Query):
             The executed query to compare.
 
-        executed_query_info (django_assert_queries.query_catcher.ExecutedQueryInfo):
+        executed_query_info (django_assert_queries.query_catcher.
+                             ExecutedQueryInfo):
             Information on the executed query to use for comparison.
 
         expected_query_info (dict):
@@ -1112,11 +1113,13 @@ def _normalize_q(
             child = _build_subquery_placeholder(
                 subquery=child,
                 subqueries=subqueries)
-        elif isinstance(child, tuple):
-            if len(child) == 2 and isinstance(child[1], list):
+        elif isinstance(child, tuple) and len(child) == 2:
+            key, value = child
+
+            if isinstance(value, list):
                 norm_children: list[Any] = []
 
-                for item in child[1]:
+                for item in value:
                     if isinstance(item, Model):
                         # Wrap the model in a proxy to allow comparisons
                         # against deleted instances.
@@ -1126,7 +1129,12 @@ def _normalize_q(
 
                     norm_children.append(item)
 
-                child = (child[0], norm_children)
+                child = (key, norm_children)
+            elif isinstance(value, QuerySet):
+                norm_q = _build_subquery_placeholder(
+                    subquery=child[1],
+                    subqueries=subqueries)
+                child = (key, norm_q)
 
         children.append(child)
 
