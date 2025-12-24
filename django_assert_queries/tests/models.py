@@ -16,6 +16,8 @@ class TestModel(models.Model):
         null=True,
         on_delete=models.SET_NULL)
 
+    __test__ = False
+
 
 class RelTestModel(models.Model):
     # Set up a relation, but don't do anything if the test model deletes.

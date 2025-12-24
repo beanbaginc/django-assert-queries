@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, List, Optional, TYPE_CHECKING, Type
 
+from django import VERSION
 from django.db.models import Exists, OuterRef, Q, QuerySet, Subquery, Sum
 from django.db.models.sql.subqueries import AggregateQuery
 from django.test.testcases import TestCase
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
     from djblets.db.query_catcher import (CatchQueriesContext,
                                           ExecutedQueryInfo,
                                           ExecutedSubQueryInfo)
+
+
+django_version: tuple[int, ...] = VERSION[:3]
 
 
 class CaptureQueriesTests(TestCase):
@@ -265,36 +269,47 @@ class CaptureQueriesTests(TestCase):
         executed_queries = ctx.executed_queries
         self.assertEqual(len(executed_queries), 1)
 
+        if django_version >= (5, 2):
+            select_id = 'SELECT U0."id" AS "pk"'
+        else:
+            select_id = 'SELECT U0."id"'
+
+        if django_version >= (6, 0):
+            expected_subqueries = 0
+        else:
+            expected_subqueries = 1
+
         self._check_query(
             executed_queries[0],
             ctx=ctx,
-            num_subqueries=1,
+            num_subqueries=expected_subqueries,
             sql=[
-                'SELECT'
-                ' "tests_testmodel"."id",'
-                ' "tests_testmodel"."name",'
-                ' "tests_testmodel"."flag", '
-                ' "tests_testmodel"."user_id", '
-                ' (SELECT U0."id"'
-                '   FROM "tests_reltestmodel" U0'
-                '   WHERE'
-                '    U0."test_id" ='
-                '    ("tests_testmodel"."id")) AS "sub"'
-                ' FROM "tests_testmodel" '
-                ' WHERE'
-                '  "tests_testmodel"."name"'
-                '   LIKE test% ESCAPE \'\\\''
+                f'SELECT'
+                f' "tests_testmodel"."id",'
+                f' "tests_testmodel"."name",'
+                f' "tests_testmodel"."flag", '
+                f' "tests_testmodel"."user_id", '
+                f' ({select_id}'
+                f'   FROM "tests_reltestmodel" U0'
+                f'   WHERE'
+                f'    U0."test_id" ='
+                f'    ("tests_testmodel"."id")) AS "sub"'
+                f' FROM "tests_testmodel" '
+                f' WHERE'
+                f'  "tests_testmodel"."name"'
+                f'   LIKE test% ESCAPE \'\\\''
             ],
 
             # NOTE: Subquery() cannot be compared through equality checks.
             can_compare_q=False)
 
-        # Check the subqueries.
-        self._check_subquery(
-            executed_queries[0]['subqueries'][0],
-            ctx=ctx,
-            subquery_class=Subquery,
-            q=Q(test=OuterRef('pk')))
+        if django_version < (6, 0):
+            # Check the subqueries.
+            self._check_subquery(
+                executed_queries[0]['subqueries'][0],
+                ctx=ctx,
+                subquery_class=Subquery,
+                q=Q(test=OuterRef('pk')))
 
         # Check the fetched objects from the query.
         self.assertEqual(len(objs), 2)
@@ -528,23 +543,28 @@ class CaptureQueriesTests(TestCase):
         executed_queries = ctx.executed_queries
         self.assertEqual(len(executed_queries), 1)
 
+        if django_version >= (5, 2):
+            select_id = 'SELECT U0."id" AS "pk"'
+        else:
+            select_id = 'SELECT U0."id"'
+
         self._check_query(
             executed_queries[0],
             ctx=ctx,
             num_subqueries=1,
             sql=[
-                'SELECT'
-                ' "tests_testmodel"."id",'
-                ' "tests_testmodel"."name",'
-                ' "tests_testmodel"."flag",'
-                ' "tests_testmodel"."user_id"'
-                ' FROM "tests_testmodel" '
-                ' WHERE'
-                '  ("tests_testmodel"."name"'
-                '    LIKE test% ESCAPE \'\\\' AND'
-                '   "tests_testmodel"."id" IN'
-                '    (SELECT U0."id" FROM'
-                '      "tests_reltestmodel" U0))',
+                f'SELECT'
+                f' "tests_testmodel"."id",'
+                f' "tests_testmodel"."name",'
+                f' "tests_testmodel"."flag",'
+                f' "tests_testmodel"."user_id"'
+                f' FROM "tests_testmodel" '
+                f' WHERE'
+                f'  ("tests_testmodel"."name"'
+                f'    LIKE test% ESCAPE \'\\\' AND'
+                f'   "tests_testmodel"."id" IN'
+                f'    ({select_id} FROM'
+                f'      "tests_reltestmodel" U0))',
             ],
 
             # NOTE: QuerySet() cannot be compared consistently through
@@ -668,74 +688,99 @@ class CaptureQueriesTests(TestCase):
         executed_queries = ctx.executed_queries
         self.assertEqual(len(executed_queries), 1)
 
+        if django_version >= (5, 2):
+            select_id = 'SELECT V0."id" AS "pk"'
+        else:
+            select_id = 'SELECT V0."id"'
+
         self._check_query(
             executed_queries[0],
             ctx=ctx,
             num_subqueries=1,
             sql=[
-                'SELECT COUNT(*) FROM'
-                ' (SELECT DISTINCT'
-                '  "tests_testmodel"."id" AS "col1",'
-                '  "tests_testmodel"."name" AS "col2",'
-                '  "tests_testmodel"."flag" AS "col3",'
-                '  "tests_testmodel"."user_id" AS "col4",'
-                '  (SELECT V0."id"'
-                '    FROM "tests_reltestmodel" V0'
-                '    WHERE (V0."test_id" ='
-                '     ("tests_testmodel"."id") AND'
-                '     V0."test_id" >'
-                '     (SELECT (SUM(U0."id") + 1) AS "some_value"'
-                '       FROM "tests_reltestmodel" U0'
-                '       WHERE U0."test_id" = (V0."id")'
-                '       GROUP BY U0."id", U0."test_id"))) AS "sub1"'
-                '  FROM "tests_testmodel"'
-                '  WHERE'
-                '   ("tests_testmodel"."name"'
-                '     LIKE test% ESCAPE \'\\\' AND'
-                '    EXISTS(SELECT 1 AS "a"'
-                '     FROM "tests_reltestmodel" V0'
-                '     WHERE'
-                '      (V0."test_id" ='
-                '       ("tests_testmodel"."id")'
-                '       AND NOT EXISTS(SELECT 1 AS "a"'
-                '        FROM "tests_reltestmodel" U0'
-                '        WHERE U0."test_id" = 2'
-                '        LIMIT 1))'
-                '     LIMIT 1))) subquery',
+                f'SELECT COUNT(*) FROM'
+                f' (SELECT DISTINCT'
+                f'  "tests_testmodel"."id" AS "col1",'
+                f'  "tests_testmodel"."name" AS "col2",'
+                f'  "tests_testmodel"."flag" AS "col3",'
+                f'  "tests_testmodel"."user_id" AS "col4",'
+                f'  ({select_id}'
+                f'    FROM "tests_reltestmodel" V0'
+                f'    WHERE (V0."test_id" ='
+                f'     ("tests_testmodel"."id") AND'
+                f'     V0."test_id" >'
+                f'     (SELECT (SUM(U0."id") + 1) AS "some_value"'
+                f'       FROM "tests_reltestmodel" U0'
+                f'       WHERE U0."test_id" = (V0."id")'
+                f'       GROUP BY U0."id", U0."test_id"))) AS "sub1"'
+                f'  FROM "tests_testmodel"'
+                f'  WHERE'
+                f'   ("tests_testmodel"."name"'
+                f'     LIKE test% ESCAPE \'\\\' AND'
+                f'    EXISTS(SELECT 1 AS "a"'
+                f'     FROM "tests_reltestmodel" V0'
+                f'     WHERE'
+                f'      (V0."test_id" ='
+                f'       ("tests_testmodel"."id")'
+                f'       AND NOT EXISTS(SELECT 1 AS "a"'
+                f'        FROM "tests_reltestmodel" U0'
+                f'        WHERE U0."test_id" = 2'
+                f'        LIMIT 1))'
+                f'     LIMIT 1))) subquery',
             ])
 
         # Check the distinct subquery.
         distinct_subquery = executed_queries[0]['subqueries'][0]
 
-        self._check_subquery(distinct_subquery,
-                             ctx=ctx,
-                             subquery_class=AggregateQuery,
-                             num_subqueries=2,
-                             can_compare_q=False)
+        if django_version >= (6, 0):
+            self._check_subquery(distinct_subquery,
+                                 ctx=ctx,
+                                 subquery_class=AggregateQuery,
+                                 num_subqueries=1,
+                                 can_compare_q=False)
 
-        subqueries = distinct_subquery['subqueries']
+            subqueries = distinct_subquery['subqueries']
 
-        # Check annotate subquery 1.
-        self._check_subquery(subqueries[0],
-                             ctx=ctx,
-                             subquery_class=Subquery,
-                             num_subqueries=1,
-                             can_compare_q=False)  # Subquery() again.
-        self._check_subquery(subqueries[0]['subqueries'][0],
-                             ctx=ctx,
-                             subquery_class=Subquery,
-                             can_compare_q=False)  # Subquery() again.
+            # Check filter subquery 1.
+            self._check_subquery(subqueries[0],
+                                 ctx=ctx,
+                                 subquery_class=Exists,
+                                 num_subqueries=1,
+                                 can_compare_q=False)   # Exists() again.
+            self._check_subquery(subqueries[0]['subqueries'][0],
+                                 subquery_class=Exists,
+                                 ctx=ctx,
+                                 q=Q(test=2))
+        else:
+            self._check_subquery(distinct_subquery,
+                                 ctx=ctx,
+                                 subquery_class=AggregateQuery,
+                                 num_subqueries=2,
+                                 can_compare_q=False)
 
-        # Check filter subquery 1.
-        self._check_subquery(subqueries[1],
-                             ctx=ctx,
-                             subquery_class=Exists,
-                             num_subqueries=1,
-                             can_compare_q=False)   # Exists() again.
-        self._check_subquery(subqueries[1]['subqueries'][0],
-                             subquery_class=Exists,
-                             ctx=ctx,
-                             q=Q(test=2))
+            subqueries = distinct_subquery['subqueries']
+
+            # Check annotate subquery 1.
+            self._check_subquery(subqueries[0],
+                                 ctx=ctx,
+                                 subquery_class=Subquery,
+                                 num_subqueries=1,
+                                 can_compare_q=False)  # Subquery() again.
+            self._check_subquery(subqueries[0]['subqueries'][0],
+                                 ctx=ctx,
+                                 subquery_class=Subquery,
+                                 can_compare_q=False)  # Subquery() again.
+
+            # Check filter subquery 1.
+            self._check_subquery(subqueries[1],
+                                 ctx=ctx,
+                                 subquery_class=Exists,
+                                 num_subqueries=1,
+                                 can_compare_q=False)   # Exists() again.
+            self._check_subquery(subqueries[1]['subqueries'][0],
+                                 subquery_class=Exists,
+                                 ctx=ctx,
+                                 q=Q(test=2))
 
         # Check the fetched count.
         self.assertEqual(count, 1)
