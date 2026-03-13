@@ -103,6 +103,21 @@ class CompareQueriesTests(TestCase):
         self.assertFalse(ctx['query_count_mismatch'])
         self.assertEqual(ctx['query_mismatches'], [])
 
+    def test_with_select_q_set_and_match(self) -> None:
+        """Testing compare_queries with SELECT and Q() with set values"""
+        queries: ExpectedQueries = [
+            {
+                'model': User,
+                'where': Q(username__in={'alice', 'bob'}),
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            list(User.objects.filter(username__in={'alice', 'bob'}))
+
+        self.assertFalse(ctx['has_mismatches'])
+        self.assertEqual(ctx['query_mismatches'], [])
+
     def test_with_match_complex(self) -> None:
         """Testing compare_queries with match and complex query"""
         queries: ExpectedQueries = [

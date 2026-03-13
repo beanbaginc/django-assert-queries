@@ -939,6 +939,11 @@ def _check_query(
         executed_value=executed_select_related)
 
     # Check 'where'. Normalize the Q object used to filter.
+    #
+    # We use Node.__eq__ instead of Q.__eq__ because Django 5.0's
+    # Q.__eq__ converts values via make_hashable(), which turns sets
+    # into frozensets/tuples without a stable ordering. This can cause
+    # unpredictable test failures with inscrutable errors.
     _check_expectation(
         'where',
         mismatched_attrs=mismatched_attrs,
@@ -950,6 +955,7 @@ def _check_query(
             catch_ctx.queries_to_qs.get(executed_query, Q()),
             deleted_objects=deleted_objects,
             normalize_subqueries=check_subqueries),
+        match_func=Node.__eq__,
         format_expected_value_func=(
             lambda q: _format_node(q, catch_ctx=catch_ctx)),
         format_executed_value_func=(
