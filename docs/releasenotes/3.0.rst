@@ -2,7 +2,7 @@
 django-assert-queries 3.0
 =========================
 
-**Release date:** TBD
+**Release date:** November 10, 2026
 
 
 Features
