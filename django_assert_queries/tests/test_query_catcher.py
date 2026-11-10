@@ -28,6 +28,28 @@ if TYPE_CHECKING:
 django_version: tuple[int, ...] = VERSION[:3]
 
 
+def _format_table_name(
+    name: str,
+) -> str:
+    """Return the name of a table prepared for an SQL statement.
+
+    On Django 6.1+, the table name will be quoted. On older releases, it
+    will be bare.
+
+    Args:
+        name (str):
+            The name of the table to format.
+
+    Returns:
+        str:
+        The resulting table name.
+    """
+    if django_version >= (6, 1):
+        return f'"{name}"'
+
+    return name
+
+
 class CaptureQueriesTests(TestCase):
     """Unit tests for djblets.db.query_catcher.catch_queries."""
 
@@ -54,20 +76,25 @@ class CaptureQueriesTests(TestCase):
         executed_queries = ctx.executed_queries
         self.assertEqual(len(executed_queries), 1)
 
+        if django_version >= (6, 1):
+            eq_true_str = ' = True'
+        else:
+            eq_true_str = ''
+
         self._check_query(
             executed_queries[0],
             ctx=ctx,
             sql=[
-                'SELECT'
-                ' "tests_testmodel"."id",'
-                ' "tests_testmodel"."name",'
-                ' "tests_testmodel"."flag",'
-                ' "tests_testmodel"."user_id" '
-                ' FROM "tests_testmodel"'
-                ' WHERE'
-                '  ("tests_testmodel"."name"'
-                '   LIKE test% ESCAPE \'\\\''
-                '   AND "tests_testmodel"."flag")',
+                f'SELECT'
+                f' "tests_testmodel"."id",'
+                f' "tests_testmodel"."name",'
+                f' "tests_testmodel"."flag",'
+                f' "tests_testmodel"."user_id" '
+                f' FROM "tests_testmodel"'
+                f' WHERE'
+                f'  ("tests_testmodel"."name"'
+                f'   LIKE test% ESCAPE \'\\\''
+                f'   AND "tests_testmodel"."flag"{eq_true_str})',
             ],
             q=(
                 Q(Q(name__startswith='test') &
@@ -269,10 +296,12 @@ class CaptureQueriesTests(TestCase):
         executed_queries = ctx.executed_queries
         self.assertEqual(len(executed_queries), 1)
 
+        table_u0 = _format_table_name('U0')
+
         if django_version >= (5, 2):
-            select_id = 'SELECT U0."id" AS "pk"'
+            select_id = f'SELECT {table_u0}."id" AS "pk"'
         else:
-            select_id = 'SELECT U0."id"'
+            select_id = f'SELECT {table_u0}."id"'
 
         if django_version >= (6, 0):
             expected_subqueries = 0
@@ -290,9 +319,9 @@ class CaptureQueriesTests(TestCase):
                 f' "tests_testmodel"."flag", '
                 f' "tests_testmodel"."user_id", '
                 f' ({select_id}'
-                f'   FROM "tests_reltestmodel" U0'
+                f'   FROM "tests_reltestmodel" {table_u0}'
                 f'   WHERE'
-                f'    U0."test_id" ='
+                f'    {table_u0}."test_id" ='
                 f'    ("tests_testmodel"."id")) AS "sub"'
                 f' FROM "tests_testmodel" '
                 f' WHERE'
@@ -344,26 +373,28 @@ class CaptureQueriesTests(TestCase):
         executed_queries = ctx.executed_queries
         self.assertEqual(len(executed_queries), 1)
 
+        table_u0 = _format_table_name('U0')
+
         self._check_query(
             executed_queries[0],
             ctx=ctx,
             num_subqueries=1,
             sql=[
-                'SELECT'
-                ' "tests_testmodel"."id",'
-                ' "tests_testmodel"."name",'
-                ' "tests_testmodel"."flag", '
-                ' "tests_testmodel"."user_id", '
-                ' EXISTS(SELECT 1 AS "a"'
-                '  FROM "tests_reltestmodel" U0'
-                '  WHERE'
-                '   U0."test_id" ='
-                '   ("tests_testmodel"."id")'
-                '  LIMIT 1) AS "sub"'
-                ' FROM "tests_testmodel" '
-                ' WHERE'
-                '  "tests_testmodel"."name"'
-                '   LIKE test% ESCAPE \'\\\''
+                f'SELECT'
+                f' "tests_testmodel"."id",'
+                f' "tests_testmodel"."name",'
+                f' "tests_testmodel"."flag", '
+                f' "tests_testmodel"."user_id", '
+                f' EXISTS(SELECT 1 AS "a"'
+                f'  FROM "tests_reltestmodel" {table_u0}'
+                f'  WHERE'
+                f'   {table_u0}."test_id" ='
+                f'   ("tests_testmodel"."id")'
+                f'  LIMIT 1) AS "sub"'
+                f' FROM "tests_testmodel" '
+                f' WHERE'
+                f'  "tests_testmodel"."name"'
+                f'   LIKE test% ESCAPE \'\\\''
             ],
 
             # NOTE: Exists() cannot be compared through equality checks.
@@ -416,26 +447,28 @@ class CaptureQueriesTests(TestCase):
         executed_queries = ctx.executed_queries
         self.assertEqual(len(executed_queries), 1)
 
+        table_u0 = _format_table_name('U0')
+
         self._check_query(
             executed_queries[0],
             ctx=ctx,
             num_subqueries=1,
             sql=[
-                'SELECT'
-                ' "tests_testmodel"."id",'
-                ' "tests_testmodel"."name",'
-                ' "tests_testmodel"."flag",'
-                ' "tests_testmodel"."user_id"'
-                ' FROM "tests_testmodel" '
-                ' WHERE'
-                '  ("tests_testmodel"."name"'
-                '    LIKE test% ESCAPE \'\\\' AND'
-                '   "tests_testmodel"."id" > '
-                '    (SELECT (SUM(U0."id") + 1) AS "some_value"'
-                '      FROM "tests_reltestmodel" U0'
-                '      WHERE U0."test_id" ='
-                '       ("tests_testmodel"."id")'
-                '      GROUP BY U0."id", U0."test_id"))'
+                f'SELECT'
+                f' "tests_testmodel"."id",'
+                f' "tests_testmodel"."name",'
+                f' "tests_testmodel"."flag",'
+                f' "tests_testmodel"."user_id"'
+                f' FROM "tests_testmodel" '
+                f' WHERE'
+                f'  ("tests_testmodel"."name"'
+                f'    LIKE test% ESCAPE \'\\\' AND'
+                f'   "tests_testmodel"."id" > '
+                f'    (SELECT (SUM({table_u0}."id") + 1) AS "some_value"'
+                f'      FROM "tests_reltestmodel" {table_u0}'
+                f'      WHERE {table_u0}."test_id" ='
+                f'       ("tests_testmodel"."id")'
+                f'      GROUP BY {table_u0}."id", {table_u0}."test_id"))'
             ],
 
             # NOTE: Subquery() cannot be compared through equality checks.
@@ -478,25 +511,27 @@ class CaptureQueriesTests(TestCase):
         executed_queries = ctx.executed_queries
         self.assertEqual(len(executed_queries), 1)
 
+        table_u0 = _format_table_name('U0')
+
         self._check_query(
             executed_queries[0],
             ctx=ctx,
             num_subqueries=1,
             sql=[
-                'SELECT'
-                ' "tests_testmodel"."id",'
-                ' "tests_testmodel"."name",'
-                ' "tests_testmodel"."flag",'
-                ' "tests_testmodel"."user_id"'
-                ' FROM "tests_testmodel" '
-                ' WHERE'
-                '  ("tests_testmodel"."name"'
-                '    LIKE test% ESCAPE \'\\\' AND'
-                '   EXISTS(SELECT 1 AS "a"'
-                '    FROM "tests_reltestmodel" U0'
-                '    WHERE U0."test_id" ='
-                '     ("tests_testmodel"."id")'
-                '    LIMIT 1))',
+                f'SELECT'
+                f' "tests_testmodel"."id",'
+                f' "tests_testmodel"."name",'
+                f' "tests_testmodel"."flag",'
+                f' "tests_testmodel"."user_id"'
+                f' FROM "tests_testmodel" '
+                f' WHERE'
+                f'  ("tests_testmodel"."name"'
+                f'    LIKE test% ESCAPE \'\\\' AND'
+                f'   EXISTS(SELECT 1 AS "a"'
+                f'    FROM "tests_reltestmodel" {table_u0}'
+                f'    WHERE {table_u0}."test_id" ='
+                f'     ("tests_testmodel"."id")'
+                f'    LIMIT 1))',
             ],
 
             # NOTE: Exists() cannot be compared through equality checks.
@@ -543,10 +578,12 @@ class CaptureQueriesTests(TestCase):
         executed_queries = ctx.executed_queries
         self.assertEqual(len(executed_queries), 1)
 
+        table_u0 = _format_table_name('U0')
+
         if django_version >= (5, 2):
-            select_id = 'SELECT U0."id" AS "pk"'
+            select_id = f'SELECT {table_u0}."id" AS "pk"'
         else:
-            select_id = 'SELECT U0."id"'
+            select_id = f'SELECT {table_u0}."id"'
 
         self._check_query(
             executed_queries[0],
@@ -564,7 +601,7 @@ class CaptureQueriesTests(TestCase):
                 f'    LIKE test% ESCAPE \'\\\' AND'
                 f'   "tests_testmodel"."id" IN'
                 f'    ({select_id} FROM'
-                f'      "tests_reltestmodel" U0))',
+                f'      "tests_reltestmodel" {table_u0}))',
             ],
 
             # NOTE: QuerySet() cannot be compared consistently through
@@ -688,10 +725,13 @@ class CaptureQueriesTests(TestCase):
         executed_queries = ctx.executed_queries
         self.assertEqual(len(executed_queries), 1)
 
+        table_v0 = _format_table_name('V0')
+        table_u0 = _format_table_name('U0')
+
         if django_version >= (5, 2):
-            select_id = 'SELECT V0."id" AS "pk"'
+            select_id = f'SELECT {table_v0}."id" AS "pk"'
         else:
-            select_id = 'SELECT V0."id"'
+            select_id = f'SELECT {table_v0}."id"'
 
         self._check_query(
             executed_queries[0],
@@ -705,26 +745,27 @@ class CaptureQueriesTests(TestCase):
                 f'  "tests_testmodel"."flag" AS "col3",'
                 f'  "tests_testmodel"."user_id" AS "col4",'
                 f'  ({select_id}'
-                f'    FROM "tests_reltestmodel" V0'
-                f'    WHERE (V0."test_id" ='
+                f'    FROM "tests_reltestmodel" {table_v0}'
+                f'    WHERE ({table_v0}."test_id" ='
                 f'     ("tests_testmodel"."id") AND'
-                f'     V0."test_id" >'
-                f'     (SELECT (SUM(U0."id") + 1) AS "some_value"'
-                f'       FROM "tests_reltestmodel" U0'
-                f'       WHERE U0."test_id" = (V0."id")'
-                f'       GROUP BY U0."id", U0."test_id"))) AS "sub1"'
+                f'     {table_v0}."test_id" >'
+                f'     (SELECT (SUM({table_u0}."id") + 1) AS "some_value"'
+                f'       FROM "tests_reltestmodel" {table_u0}'
+                f'       WHERE {table_u0}."test_id" = ({table_v0}."id")'
+                f'       GROUP BY {table_u0}."id",'
+                f'                {table_u0}."test_id"))) AS "sub1"'
                 f'  FROM "tests_testmodel"'
                 f'  WHERE'
                 f'   ("tests_testmodel"."name"'
                 f'     LIKE test% ESCAPE \'\\\' AND'
                 f'    EXISTS(SELECT 1 AS "a"'
-                f'     FROM "tests_reltestmodel" V0'
+                f'     FROM "tests_reltestmodel" {table_v0}'
                 f'     WHERE'
-                f'      (V0."test_id" ='
+                f'      ({table_v0}."test_id" ='
                 f'       ("tests_testmodel"."id")'
                 f'       AND NOT EXISTS(SELECT 1 AS "a"'
-                f'        FROM "tests_reltestmodel" U0'
-                f'        WHERE U0."test_id" = 2'
+                f'        FROM "tests_reltestmodel" {table_u0}'
+                f'        WHERE {table_u0}."test_id" = 2'
                 f'        LIMIT 1))'
                 f'     LIMIT 1))) subquery',
             ])
