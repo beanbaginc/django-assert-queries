@@ -32,6 +32,7 @@ html_static_path = ['_static']
 
 
 intersphinx_mapping = {
+    'django6.1': ('https://docs.djangoproject.com/en/6.1/', None),
     'python': ('https://docs.python.org/3', None),
 }
 

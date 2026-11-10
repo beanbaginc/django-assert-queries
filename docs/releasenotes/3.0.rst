@@ -1,0 +1,26 @@
+=========================
+django-assert-queries 3.0
+=========================
+
+**Release date:** TBD
+
+
+Features
+========
+
+* Added support for Django through 6.1.
+
+  Support is now available for Django 4.2 through 6.1.
+
+* Added support for Python through 3.15.
+
+* Added comparisons for:
+
+  * :py:class:`~django.db.models.query.OrderBy` using ``nulls_first``,
+    ``nulls_last``, and subqueries.
+
+    This may affect existing unit tests that were comparing ordering before.
+
+  * :py:class:`~django.db.models.Q` objects with Python sets.
+
+  * :py:class:`~django.db.models.query.QuerySet` objects in subqueries.
