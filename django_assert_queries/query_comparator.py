@@ -19,7 +19,9 @@ from typing import (Any, Callable, Dict, Iterator, List, Mapping, Optional,
 
 from django.db.models import F, Model, Q, QuerySet
 from django.db.models.expressions import (CombinedExpression,
+                                          ExpressionWrapper,
                                           NegatedExpression,
+                                          OrderBy,
                                           Subquery,
                                           Value)
 from django.db.models.query import MAX_GET_RESULTS
@@ -216,8 +218,19 @@ class ExpectedQuery(TypedDict):
 
     #: The ordering criteria.
     #:
+    #: Each entry may be a field name (optionally prefixed with ``-`` for
+    #: descending order) or an expression, such as an ``OrderBy(F(...))``.
+    #:
+    #: Subqueries in the ordering are only matched by their position and
+    #: type. Their contents must be checked using :py:attr:`subqueries`.
+    #:
     #: The default is empty.
-    order_by: NotRequired[Tuple[str, ...]]
+    #:
+    #: Version Changed:
+    #:     3.0:
+    #:     Added support for :py:class:`~django.db.models.OrderBy` and
+    #:     subqueries.
+    order_by: NotRequired[tuple[str | BaseExpression, ...]]
 
     #: Whether this is a select-for-update operation.
     #:
@@ -802,7 +815,6 @@ def _check_query(
                          ('extra_order_by', ()),
                          ('extra_tables', ()),
                          ('group_by', None),
-                         ('order_by', ()),
                          ('select_for_update', False),
                          ('subquery', False),
                          ('values_select', ())):
@@ -811,6 +823,27 @@ def _check_query(
             mismatched_attrs=mismatched_attrs,
             expected_value=expected_query_info.get(key, default),
             executed_value=getattr(executed_query, key))
+
+    # Check 'order_by'. This uses a custom formatter that can handle
+    # additional fields like nulls_first= or nulls_last=, which can affect
+    # the ordering but isn't normally shown in the repr().
+    #
+    # It also handles subqueries, using the same approach we use for
+    # filters.
+    _check_expectation(
+        'order_by',
+        mismatched_attrs=mismatched_attrs,
+        expected_value=_normalize_order_by(
+            expected_query_info.get('order_by', ()),
+            normalize_subqueries=check_subqueries,
+        ),
+        executed_value=_normalize_order_by(
+            executed_query.order_by,
+            normalize_subqueries=check_subqueries,
+        ),
+        format_expected_value_func=_format_order_by_value,
+        format_executed_value_func=_format_order_by_value,
+    )
 
     # Check 'extra'.
     _check_expectation(
@@ -1017,6 +1050,78 @@ def _build_subquery_placeholder(
         return norm_subquery
 
 
+def _normalize_order_by(
+    order_by: Sequence[Any],
+    *,
+    normalize_subqueries: bool,
+) -> tuple[Any, ...]:
+    """Normalize an order_by tuple for comparison.
+
+    This will replace any :py:class:`~django.db.models.Subquery` or
+    :py:class:`~django.db.models.QuerySet` instances (either bare, within an
+    :py:class:`~django.db.models.OrderBy`, or within an
+    :py:class:`~django.db.models.ExpressionWrapper`) with a placeholder that
+    works with subquery support.
+
+    Version Added:
+        3.0
+
+    Args:
+        order_by (list or tuple):
+            The order_by entries to normalize.
+
+        normalize_subqueries (bool):
+            Whether to replace subqueries with placeholders.
+
+            If ``False``, the entries will be returned as-is, so that any
+            subqueries are compared directly.
+
+    Returns:
+        tuple:
+        The resulting normalized order_by entries.
+    """
+    if not normalize_subqueries:
+        return tuple(order_by)
+
+    normalized: list[Any] = []
+    num_subqueries = 0
+
+    for entry in order_by:
+        expression = entry
+
+        if isinstance(expression, OrderBy):
+            expression = expression.expression
+
+        if isinstance(expression, ExpressionWrapper):
+            expression = expression.expression  # type: ignore
+
+        if isinstance(expression, (QuerySet, Subquery)):
+            num_subqueries += 1
+            subquery_type = type(expression).__name__
+
+            # This has to use Value() instead of Q(), given OrderBy()'s
+            # requirements to use Value() or F() or similar.
+            placeholder = Value(
+                f'__{subquery_type}__subquery__{num_subqueries}',
+            )
+
+            if isinstance(entry, OrderBy):
+                # Rebuild the OrderBy with one that references the subquery
+                # placeholder.
+                entry = OrderBy(
+                    placeholder,
+                    descending=entry.descending,
+                    nulls_first=entry.nulls_first,
+                    nulls_last=entry.nulls_last,
+                )
+            else:
+                entry = placeholder
+
+        normalized.append(entry)
+
+    return tuple(normalized)
+
+
 def _normalize_q(
     q: Q,
     *,
@@ -1220,6 +1325,59 @@ def _format_query_value(
             return 'set()'
     else:
         return repr(value)
+
+
+def _format_order_by_value(
+    value: Any,
+) -> str:
+    """Format an order_by value.
+
+    This will format an order-by value in a way that correctly indicates
+    when ``nulls_first`` or ``nulls_last`` are used.
+
+    Version Added:
+        3.0
+
+    Args:
+        value (object):
+            The order_by value to format.
+
+            This may be the full order_by tuple or a component within it.
+
+    Returns:
+        str:
+        The formatted value.
+    """
+    if isinstance(value, (list, tuple)):
+        formatted_entries = [
+            _format_order_by_value(_entry)
+            for _entry in value
+        ]
+
+        if len(formatted_entries) == 1:
+            return f'({formatted_entries[0]},)'
+
+        entries_str = ', '.join(formatted_entries)
+
+        return f'({entries_str})'
+    elif isinstance(value, OrderBy):
+        parts: list[str] = [
+            _format_query_value(value.expression),
+            f'descending={value.descending!r}',
+        ]
+
+        if (nulls_first := value.nulls_first) is not None:
+            parts.append(f'nulls_first={nulls_first!r}')
+
+        if (nulls_last := value.nulls_last) is not None:
+            parts.append(f'nulls_last={nulls_last!r}')
+
+        type_name = type(value).__name__
+        parts_str = ', '.join(parts)
+
+        return f'{type_name}({parts_str})'
+    else:
+        return _format_query_value(value)
 
 
 def _format_query_part(

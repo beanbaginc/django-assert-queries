@@ -16,7 +16,7 @@ import kgb
 from django.core.exceptions import EmptyResultSet
 from django.db.models import Model, Q, QuerySet, Subquery
 from django.db.models.deletion import Collector as DeleteCollector
-from django.db.models.expressions import ExpressionWrapper
+from django.db.models.expressions import ExpressionWrapper, OrderBy
 from django.db.models.signals import pre_delete
 from django.db.models.sql.compiler import (SQLCompiler,
                                            SQLDeleteCompiler,
@@ -361,8 +361,8 @@ def _scan_subqueries(
             # We won't have any children to process, so we'll effectively
             # bail at this point.
         else:
-            # Process the annotations.
-            children = list(node.annotations.values())
+            # Process the annotations and ordering criteria.
+            children = list(node.annotations.values()) + list(node.order_by)
 
             # Continue on by processing the Q filters within it.
             try:
@@ -385,6 +385,9 @@ def _scan_subqueries(
                                  queries_to_qs=queries_to_qs,
                                  _check_subqueries=_check_subqueries)
             elif _check_subqueries:
+                if isinstance(child, OrderBy):
+                    child = child.expression
+
                 if isinstance(child, ExpressionWrapper):
                     # NOTE: As of November 28, 2023, django-stubs doesn't have
                     #       type hints for `ExpressionWrapper.expression`.

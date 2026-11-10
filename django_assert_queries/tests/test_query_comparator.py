@@ -10,7 +10,9 @@ import re
 from typing import TYPE_CHECKING
 
 from django.contrib.auth.models import Group, User
-from django.db.models import Count, Exists, F, OuterRef, Q, Value
+from django.db.models import (CharField, Count, Exists, F, OuterRef, Q,
+                              Subquery, Value)
+from django.db.models.expressions import ExpressionWrapper, OrderBy
 
 from django_assert_queries.query_catcher import CatchQueriesContext
 from django_assert_queries.query_comparator import (compare_queries,
@@ -670,6 +672,376 @@ class CompareQueriesTests(TestCase):
                 },
             ])
 
+    def test_with_order_by_expressions_match(self) -> None:
+        """Testing compare_queries with match and OrderBy(F(...))"""
+        queries: ExpectedQueries = [
+            {
+                'model': User,
+                'order_by': (
+                    OrderBy(
+                        F('username'),
+                        descending=True,
+                    ),
+                    OrderBy(
+                        F('pk'),
+                        descending=True,
+                    ),
+                ),
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            list(User.objects.order_by(
+                F('username').desc(),
+                F('pk').desc(),
+            ))
+
+        self.assertFalse(ctx['has_mismatches'])
+        self.assertEqual(ctx['query_mismatches'], [])
+
+    def test_with_order_by_mixed_strings_and_expressions_match(self) -> None:
+        """Testing compare_queries with match and order_by mixing strings and
+        expressions
+        """
+        queries: ExpectedQueries = [
+            {
+                'model': User,
+                'order_by': (
+                    'email',
+                    OrderBy(
+                        F('username'),
+                        descending=True,
+                    ),
+                    '-pk',
+                ),
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            list(User.objects.order_by(
+                'email',
+                F('username').desc(),
+                '-pk',
+            ))
+
+        self.assertFalse(ctx['has_mismatches'])
+        self.assertEqual(ctx['query_mismatches'], [])
+
+    def test_with_order_by_with_nulls_first_match(self) -> None:
+        """Testing compare_queries with match and OrderBy nulls_first"""
+        self._test_order_by_with_nulls_match('nulls_first')
+
+    def test_with_order_by_with_nulls_last_match(self) -> None:
+        """Testing compare_queries with match and OrderBy nulls_last"""
+        self._test_order_by_with_nulls_match('nulls_last')
+
+    def test_with_mismatch_order_by_with_nulls_first(self) -> None:
+        """Testing compare_queries with mismatch and OrderBy nulls_first"""
+        self._test_mismatch_order_by_with_nulls('nulls_first')
+
+    def test_with_mismatch_order_by_with_nulls_last(self) -> None:
+        """Testing compare_queries with mismatch and OrderBy nulls_last"""
+        self._test_mismatch_order_by_with_nulls('nulls_last')
+
+    def test_with_mismatch_order_by_with_multiple_expressions(self) -> None:
+        """Testing compare_queries with mismatch and multiple OrderBy entries
+        """
+        queries: ExpectedQueries = [
+            {
+                'model': User,
+                'order_by': (
+                    'email',
+                    OrderBy(
+                        F('username'),
+                        descending=True,
+                    ),
+                ),
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            list(User.objects.order_by(
+                'email',
+                OrderBy(
+                    F('username'),
+                    descending=True,
+                    nulls_last=True,
+                ),
+            ))
+
+        self.assertTrue(ctx['has_mismatches'])
+
+        mismatches = ctx['query_mismatches']
+        self.assertEqual(len(mismatches), 1)
+        self.assertEqual(
+            mismatches[0]['mismatched_attrs'],
+            [
+                {
+                    'executed_value': (
+                        "('email', OrderBy(F('username'), descending=True, "
+                        "nulls_last=True))"
+                    ),
+                    'expected_value': (
+                        "('email', OrderBy(F('username'), descending=True))"
+                    ),
+                    'name': 'order_by',
+                    'raw_executed_value': (
+                        'email',
+                        OrderBy(
+                            F('username'),
+                            descending=True,
+                            nulls_last=True,
+                        ),
+                    ),
+                    'raw_expected_value': (
+                        'email',
+                        OrderBy(
+                            F('username'),
+                            descending=True,
+                        ),
+                    ),
+                },
+            ])
+
+    def test_with_order_by_with_subquery(self) -> None:
+        """Testing compare_queries with match and Subquery in order_by"""
+        queries: ExpectedQueries = [
+            {
+                'model': Book,
+                'order_by': (
+                    OrderBy(
+                        Subquery(
+                            Author.objects
+                            .filter(pk=OuterRef('author_id'))
+                            .values('name')[:1],
+                        ),
+                        descending=True,
+                    ),
+                ),
+                'subqueries': [
+                    {
+                        'limit': 1,
+                        'model': Author,
+                        'subquery': True,
+                        'values_select': ('name',),
+                        'where': Q(pk=OuterRef('author_id')),
+                    },
+                ],
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            list(Book.objects.order_by(
+                OrderBy(
+                    Subquery(
+                        Author.objects
+                        .filter(pk=OuterRef('author_id'))
+                        .values('name')[:1],
+                    ),
+                    descending=True,
+                ),
+            ))
+
+        self.assertFalse(ctx['has_mismatches'])
+        self.assertEqual(ctx['query_mismatches'], [])
+
+    def test_with_mismatch_order_by_subquery(self) -> None:
+        """Testing compare_queries with mismatch and Subquery in order_by"""
+        queries: ExpectedQueries = [
+            {
+                'model': Book,
+                'order_by': (
+                    OrderBy(
+                        Subquery(
+                            Author.objects
+                            .filter(pk=OuterRef('author_id'))
+                            .values('name')[:1],
+                        ),
+                        descending=True,
+                    ),
+                ),
+                'subqueries': [
+                    {
+                        'limit': 1,
+                        'model': Author,
+                        'subquery': True,
+                        'values_select': ('id',),
+                        'where': Q(pk=OuterRef('author_id')),
+                    },
+                ],
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            list(Book.objects.order_by(
+                OrderBy(
+                    Subquery(
+                        Author.objects
+                        .filter(pk=OuterRef('author_id'))
+                        .values('name')[:1],
+                    ),
+                    descending=True,
+                ),
+            ))
+
+        self.assertTrue(ctx['has_mismatches'])
+        mismatches = ctx['query_mismatches']
+        self.assertEqual(len(mismatches), 1)
+
+        mismatch = mismatches[0]
+        self.assertEqual(mismatch['mismatched_attrs'], [])
+
+        subqueries = mismatch['subqueries']
+        assert subqueries is not None
+        self.assertTrue(subqueries['has_mismatches'])
+
+        subquery_mismatches = subqueries['query_mismatches']
+        self.assertEqual(len(subquery_mismatches), 1)
+        self.assertEqual(
+            subquery_mismatches[0]['mismatched_attrs'],
+            [
+                {
+                    'executed_value': "('name',)",
+                    'expected_value': "('id',)",
+                    'name': 'values_select',
+                    'raw_executed_value': ('name',),
+                    'raw_expected_value': ('id',),
+                },
+            ])
+
+    def test_with_order_by_with_bare_subquery(self) -> None:
+        """Testing compare_queries with match and bare Subquery in order_by"""
+        queries: ExpectedQueries = [
+            {
+                'model': Book,
+                'order_by': (
+                    Subquery(
+                        Author.objects
+                        .filter(pk=OuterRef('author_id'))
+                        .values('name')[:1],
+                    ),
+                ),
+                'subqueries': [
+                    {
+                        'limit': 1,
+                        'model': Author,
+                        'subquery': True,
+                        'values_select': ('name',),
+                        'where': Q(pk=OuterRef('author_id')),
+                    },
+                ],
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            list(Book.objects.order_by(
+                Subquery(
+                    Author.objects
+                    .filter(pk=OuterRef('author_id'))
+                    .values('name')[:1],
+                ),
+            ))
+
+        self.assertFalse(ctx['has_mismatches'])
+        self.assertEqual(ctx['query_mismatches'], [])
+
+    def test_with_order_by_with_expression_wrapper_subquery(self) -> None:
+        """Testing compare_queries with match and
+        OrderBy(ExpressionWrapper(Subquery(...))) in order_by
+        """
+        queries: ExpectedQueries = [
+            {
+                'model': Book,
+                'order_by': (
+                    OrderBy(
+                        ExpressionWrapper(
+                            Subquery(
+                                Author.objects
+                                .filter(pk=OuterRef('author_id'))
+                                .values('name')[:1],
+                            ),
+                            output_field=CharField(),
+                        ),
+                        descending=True,
+                    ),
+                ),
+                'subqueries': [
+                    {
+                        'limit': 1,
+                        'model': Author,
+                        'subquery': True,
+                        'values_select': ('name',),
+                        'where': Q(pk=OuterRef('author_id')),
+                    },
+                ],
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            list(Book.objects.order_by(
+                OrderBy(
+                    ExpressionWrapper(
+                        Subquery(
+                            Author.objects
+                            .filter(pk=OuterRef('author_id'))
+                            .values('name')[:1],
+                        ),
+                        output_field=CharField(),
+                    ),
+                    descending=True,
+                ),
+            ))
+
+        self.assertFalse(ctx['has_mismatches'])
+        self.assertEqual(ctx['query_mismatches'], [])
+
+    def test_with_mismatch_order_by_subquery_without_check_subqueries(
+        self,
+    ) -> None:
+        """Testing compare_queries with mismatch and Subquery in order_by
+        without checking subqueries
+        """
+        queries: ExpectedQueries = [
+            {
+                'model': Book,
+                'order_by': (
+                    OrderBy(
+                        Subquery(
+                            Author.objects
+                            .filter(pk=OuterRef('author_id'))
+                            .values('id')[:1],
+                        ),
+                        descending=True,
+                    ),
+                ),
+            },
+        ]
+
+        with compare_queries(queries, _check_subqueries=False) as ctx:
+            list(Book.objects.order_by(
+                OrderBy(
+                    Subquery(
+                        Author.objects
+                        .filter(pk=OuterRef('author_id'))
+                        .values('name')[:1],
+                    ),
+                    descending=True,
+                ),
+            ))
+
+        # Without subquery checking, the subqueries must not be normalized
+        # into identical placeholders. They should be compared directly.
+        self.assertTrue(ctx['has_mismatches'])
+
+        mismatches = ctx['query_mismatches']
+        self.assertEqual(len(mismatches), 1)
+        self.assertEqual(
+            [
+                mismatched_attr['name']
+                for mismatched_attr in mismatches[0]['mismatched_attrs']
+            ],
+            ['order_by'])
+
     def test_with_mismatch_select_for_update(self) -> None:
         """Testing compare_queries with mismatch and select_for_update"""
         queries: ExpectedQueries = [
@@ -1116,6 +1488,142 @@ class CompareQueriesTests(TestCase):
                     'raw_expected_value': Q(),
                 },
             ])
+
+    def _test_order_by_with_nulls_match(
+        self,
+        nulls_attr: str,
+    ) -> None:
+        """Test matching an OrderBy with a nulls_* attribute.
+
+        Version Added:
+            3.0
+
+        Args:
+            nulls_attr (str):
+                The ``nulls_first`` or ``nulls_last`` attribute to set.
+
+        Raises:
+            AssertionError:
+                An expectation failed.
+        """
+        queries: ExpectedQueries = [
+            {
+                'model': User,
+                'order_by': (
+                    OrderBy(
+                        F('username'),
+                        descending=True,
+                        **{nulls_attr: True},
+                    ),
+                ),
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            list(User.objects.order_by(
+                OrderBy(
+                    F('username'),
+                    descending=True,
+                    **{nulls_attr: True},
+                ),
+            ))
+
+        self.assertFalse(ctx['has_mismatches'])
+        self.assertEqual(ctx['query_mismatches'], [])
+
+    def _test_mismatch_order_by_with_nulls(
+        self,
+        nulls_attr: str,
+    ) -> None:
+        """Test a mismatch from an OrderBy with a nulls_* attribute.
+
+        The executed query will set the attribute, but the expected query
+        won't.
+
+        Version Added:
+            3.0
+
+        Args:
+            nulls_attr (str):
+                The ``nulls_first`` or ``nulls_last`` attribute to set.
+
+        Raises:
+            AssertionError:
+                An expectation failed.
+        """
+        queries: ExpectedQueries = [
+            {
+                'model': User,
+                'order_by': (
+                    OrderBy(
+                        F('username'),
+                        descending=True,
+                    ),
+                ),
+            },
+        ]
+
+        with compare_queries(queries) as ctx:
+            list(User.objects.order_by(
+                OrderBy(
+                    F('username'),
+                    descending=True,
+                    **{nulls_attr: True},
+                ),
+            ))
+
+        self.assertTrue(ctx['has_mismatches'])
+        self.assertEqual(ctx['num_executed_queries'], 1)
+        self.assertEqual(ctx['num_expected_queries'], 1)
+        self.assertFalse(ctx['query_count_mismatch'], 1)
+
+        mismatches = ctx['query_mismatches']
+        self.assertEqual(len(mismatches), 1)
+
+        mismatch = mismatches[0]
+        self.assertIsNotNone(mismatch['executed_query'])
+        self.assertEqual(mismatch['index'], 0)
+        self.assertIsNone(mismatch['note'])
+        self.assertIsNotNone(mismatch['traceback'])
+        self.assertEqual(
+            mismatch['subqueries'],
+            {
+                '_unchecked_mismatched_attrs': set(),
+                'has_mismatches': False,
+                'num_executed_queries': 0,
+                'num_expected_queries': 0,
+                'query_count_mismatch': False,
+                'query_mismatches': [],
+            },
+        )
+        self.assertEqual(
+            mismatch['mismatched_attrs'],
+            [
+                {
+                    'executed_value': (
+                        f"(OrderBy(F('username'), descending=True, "
+                        f"{nulls_attr}=True),)"
+                    ),
+                    'expected_value': (
+                        "(OrderBy(F('username'), descending=True),)"
+                    ),
+                    'name': 'order_by',
+                    'raw_executed_value': (
+                        OrderBy(
+                            F('username'),
+                            descending=True,
+                            **{nulls_attr: True},
+                        ),
+                    ),
+                    'raw_expected_value': (
+                        OrderBy(
+                            F('username'),
+                            descending=True,
+                        ),
+                    ),
+                },
+            ],
+        )
 
 
 class FormatNodeTests(TestCase):

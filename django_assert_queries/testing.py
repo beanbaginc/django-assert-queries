@@ -43,7 +43,7 @@ def assert_queries(
             against.
 
         num_statements (int, optional):
-            The numbre of SQL statements executed.
+            The number of SQL statements executed.
 
             This defaults to the length of ``queries``, but callers may
             need to provide an explicit number, as some operations may add
